@@ -1,0 +1,5 @@
+{
+  "pulchra": "tools/pulchra/pulchra",
+  "obabel": "/path/to/obabel",
+  "vina": "/path/to/vina"
+}

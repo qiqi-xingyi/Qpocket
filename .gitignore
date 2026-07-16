@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Path R run outputs / test artifacts
+logs/
+result/
+examples/_smoke_run/
+tests/_tmp_landscape/
+
+# OS
+.DS_Store

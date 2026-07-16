@@ -1,0 +1,50 @@
+# Conda environment for the KRAS quantum pocket conformational-landscape + docking pipeline.
+#
+#   conda env create -f environment.yml
+#   conda activate kras-quantum
+#
+# Quick post-install sanity:
+#   pulchra --help    # see PULCHRA note below
+#   vina --help
+#   obabel -V
+#   pytest tests/
+#
+# IMPORTANT — PULCHRA:
+#   PULCHRA is NOT a conda package. Install it manually and ensure the
+#   `pulchra` binary is on PATH, OR export
+#   `PULCHRA_BIN=/full/path/to/pulchra` before running the docking
+#   evaluation. Without PULCHRA the all-atom reconstruction step fails
+#   loudly (no fake structures are produced).
+#
+# IMPORTANT — IBM credentials:
+#   This file does NOT contain any IBM token. Use
+#     QiskitRuntimeService.save_account(channel=..., token=...)
+#   once on your machine, OR set the canonical IBM Runtime env vars.
+#   The pipeline never reads or writes a token.
+name: qsad
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # core scientific stack
+  - python=3.10
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - networkx
+  # testing
+  - pytest
+  - pytest-timeout
+  # quantum
+  - qiskit
+  - qiskit-aer
+  - qiskit-ibm-runtime
+  # docking + ligand prep
+  - openbabel
+  - vina
+  # pip-only fallback (none required by default)
+  - pip
+  - pip:
+      []
