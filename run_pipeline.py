@@ -150,7 +150,17 @@ def build_parser() -> argparse.ArgumentParser:
     dg.add_argument("--exhaustiveness", type=int, default=8)
     dg.add_argument("--num-modes", type=int, default=9)
     dg.add_argument("--temperature-k", type=float, default=298.15)
-    dg.add_argument("--use-kabsch-rmsd", action="store_true")
+    dg.add_argument(
+        "--no-kabsch-rmsd",
+        dest="use_kabsch_rmsd",
+        action="store_false",
+        help=(
+            "Disable Kabsch alignment when computing oracle RMSD. Off by "
+            "default: candidate coords come from anchor decoding, so "
+            "unaligned RMSD is meaningless."
+        ),
+    )
+    dg.set_defaults(use_kabsch_rmsd=True)
 
     fg = p.add_argument_group("flow control")
     fg.add_argument("--skip-sampling", action="store_true",

@@ -411,7 +411,7 @@ def run_evaluation(
     fail_fast: bool = False,
     skip_docking: bool = False,
     skip_reconstruction: bool = False,
-    use_kabsch_rmsd: bool = False,
+    use_kabsch_rmsd: bool = True,
     docking_pipeline_factory: Callable[[], DockingEvaluationPipeline] = None,
     reconstruction_factory: Callable[[], FullAtomReconstructionPipeline] = None,
     oracle_reader: Optional[CandidateReader] = None,
@@ -837,7 +837,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fail-fast", action="store_true")
     p.add_argument("--skip-docking", action="store_true")
     p.add_argument("--skip-reconstruction", action="store_true")
-    p.add_argument("--use-kabsch-rmsd", action="store_true")
+    p.add_argument(
+        "--no-kabsch-rmsd",
+        dest="use_kabsch_rmsd",
+        action="store_false",
+        help=(
+            "Disable Kabsch alignment when computing oracle RMSD. Off by "
+            "default: candidate coords are decoded from anchors, not the "
+            "reference lab frame, so unaligned RMSD is dominated by "
+            "translation and silently invalidates oracle_best_rmsd."
+        ),
+    )
+    p.set_defaults(use_kabsch_rmsd=True)
     return p
 
 
