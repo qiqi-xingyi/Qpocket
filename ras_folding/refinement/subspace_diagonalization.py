@@ -56,6 +56,21 @@ def _is_perturbed(sample) -> bool:
     return bool(d.get("is_perturbed", False))
 
 
+def _bitstring_to_int(bitstring: str) -> int:
+    """Parse a candidate bitstring to int, tolerating the densify child tag.
+
+    ``PerturbationDenseFiller._build_child`` appends a ``#dN`` sentinel to
+    child bitstrings (see ras_folding/densify/dense_filler.py::_DENSE_CHILD_TAG)
+    so dedup keeps children distinct from their parent. The character '#' is
+    invalid in a binary string, so ``int(bs, 2)`` would raise on any dense
+    child. Dense children share their parent's quantum state (only coords are
+    perturbed), so for Pauli-Hamming coupling we strip the sentinel and parse
+    the parent's binary bitstring.
+    """
+    base = bitstring.split("#", 1)[0]
+    return int(base, 2)
+
+
 class SubspaceDiagonalizationRefiner:
     def __init__(
         self,
@@ -197,7 +212,7 @@ class SubspaceDiagonalizationRefiner:
             hybrid_coupling_matrix,
         )
         bitstrings = [
-            int(s.bitstring, 2) for s in selected if s.bitstring
+            _bitstring_to_int(s.bitstring) for s in selected if s.bitstring
         ]
         if len(bitstrings) != len(selected):
             raise RuntimeError(
