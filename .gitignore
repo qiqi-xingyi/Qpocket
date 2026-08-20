@@ -9,7 +9,7 @@ logs/
 result/
 examples/_smoke_run/
 tests/_tmp_landscape/
-revision_workflow/
+revision_workspace/
 
 # OS
 .DS_Store
