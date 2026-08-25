@@ -66,7 +66,10 @@ def main(argv=None) -> int:
     n = 0
     total_proposals = 0
     with out_path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh, delimiter="\t")
+        # LF endings: this file is parsed by the submit script with
+        # cut, and csv.writer would otherwise emit CRLF and leave a
+        # carriage return on the last field of every line.
+        w = csv.writer(fh, delimiter="\t", lineterminator="\n")
         w.writerow(["index", "arm", "task_id", "repeat", "n_residues",
                     "n_proposals"])
         for arm in args.arms:

@@ -47,7 +47,7 @@ if [[ ! -f "${CELLS}" ]]; then
 fi
 
 IDX="${SLURM_ARRAY_TASK_ID:?this script must be submitted as an array job}"
-LINE="$(awk -F'\t' -v i="${IDX}" 'NR>1 && $1==i {print; found=1} END{if(!found) exit 3}' "${CELLS}")" || {
+LINE="$(awk -F'\t' -v i="${IDX}" 'NR>1 { sub(/\r$/, "") } NR>1 && $1==i {print; found=1} END{if(!found) exit 3}' "${CELLS}")" || {
     echo "ERROR: no cell with index ${IDX} in ${CELLS}" >&2
     exit 3
 }
