@@ -18,7 +18,12 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+# Measured: 0.24 GB baseline + 0.36 GB per million proposals, so the
+# largest cell (2,007,040 per tau across three taus) peaks near 2.4 GB.
+# The request also decides the core count -- Cardinal allocates roughly
+# 4.84 GB per core -- and these arms are single-threaded, so anything
+# above one core's worth of memory is charged and not used.
+#SBATCH --mem=4G
 #SBATCH --time=12:00:00
 #SBATCH --output=revision/results/slurm/qpr_g1_%A_%a.out
 #SBATCH --error=revision/results/slurm/qpr_g1_%A_%a.err
@@ -77,7 +82,12 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-srun python revision/run_arm.py \
+# Run the interpreter directly rather than through srun. This is a single
+# process on a single node, so a job step buys nothing -- and srun refuses
+# to start when the site's SLURM_CPUS_PER_TASK (derived from the memory
+# request) disagrees with the SLURM_TRES_PER_TASK implied by
+# --cpus-per-task, which is exactly the situation here.
+python revision/run_arm.py \
     --arm "${ARM}" \
     --task-id "${TASK}" \
     --repeat "${REP}" \
