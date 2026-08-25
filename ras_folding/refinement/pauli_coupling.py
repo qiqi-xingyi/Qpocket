@@ -70,6 +70,28 @@ def popcount_array(xs: np.ndarray) -> np.ndarray:
 # Hamming-1 Pauli coupling                                               #
 # ---------------------------------------------------------------------- #
 
+def _hamming1_pairs_bigint(bitstrings: List[int]) -> "tuple":
+    """Hamming-1 pairs for bitstrings wider than a machine integer.
+
+    numpy cannot hold a code wider than 63 bits, so the vectorised XOR
+    path is unavailable here and the pairs are found with Python integers
+    instead. The refinement subspace is capped in the hundreds, so the
+    quadratic scan costs far less than the diagonalisation that follows.
+    """
+    n = len(bitstrings)
+    rows: List[int] = []
+    cols: List[int] = []
+    for i in range(n):
+        zi = bitstrings[i]
+        for j in range(i + 1, n):
+            x = zi ^ bitstrings[j]
+            # A power of two is exactly one differing bit.
+            if x and (x & (x - 1)) == 0:
+                rows.append(i); cols.append(j)
+                rows.append(j); cols.append(i)
+    return np.asarray(rows, dtype=np.int64), np.asarray(cols, dtype=np.int64)
+
+
 def pauli_hamming1_matrix(
     bitstrings: List[int], g: float, n_qubits: int,
 ) -> sp.csr_matrix:
@@ -99,26 +121,32 @@ def pauli_hamming1_matrix(
     if N == 0:
         return sp.csr_matrix((0, 0), dtype=np.float64)
 
-    bs_arr = np.asarray(bitstrings, dtype=np.int64)
-    # mask check: ensure no bitstring exceeds n_qubits bits
+    # Width check on Python integers, before any narrowing conversion. A
+    # code of n_qubits bits does not fit a machine integer once n_qubits
+    # reaches 63, and converting first would raise on the conversion
+    # rather than report an out-of-range code.
+    max_val = (1 << n_qubits) - 1
+    worst = max(bitstrings)
+    if worst > max_val:
+        raise ValueError(
+            f"bitstring exceeds n_qubits={n_qubits} bit width; "
+            f"max value = {worst}, allowed = {max_val}"
+        )
+
     if n_qubits < 63:
-        max_val = (1 << n_qubits) - 1
-        if bs_arr.max() > max_val:
-            raise ValueError(
-                f"bitstring exceeds n_qubits={n_qubits} bit width; "
-                f"max value = {bs_arr.max()}, allowed = {max_val}"
-            )
+        # Pairwise XOR via broadcasting (N×N)
+        # For N=200 → 40K pairs; for N=500 → 250K pairs. Tractable.
+        bs_arr = np.asarray(bitstrings, dtype=np.int64)
+        xor_mat = np.bitwise_xor(bs_arr[:, None], bs_arr[None, :])
+        pop_mat = popcount_array(xor_mat.ravel()).reshape(N, N)
 
-    # Pairwise XOR via broadcasting (N×N)
-    # For N=200 → 40K pairs; for N=500 → 250K pairs. Tractable.
-    xor_mat = np.bitwise_xor(bs_arr[:, None], bs_arr[None, :])
-    pop_mat = popcount_array(xor_mat.ravel()).reshape(N, N)
+        # T[i, j] = -g iff popcount(xor) == 1 (and i != j)
+        mask = (pop_mat == 1)
+        np.fill_diagonal(mask, False)  # safety, popcount(0) == 0 anyway
+        rows, cols = np.where(mask)
+    else:
+        rows, cols = _hamming1_pairs_bigint(bitstrings)
 
-    # T[i, j] = -g iff popcount(xor) == 1 (and i != j)
-    mask = (pop_mat == 1)
-    np.fill_diagonal(mask, False)  # safety, popcount(0) == 0 anyway
-
-    rows, cols = np.where(mask)
     data = np.full(rows.size, -float(g), dtype=np.float64)
 
     T = sp.csr_matrix(
@@ -152,16 +180,24 @@ def hamming_graph_stats(
             "max_degree": 0,
             "n_isolated": N,
         }
-    bs_arr = np.asarray(bitstrings, dtype=np.int64)
-    xor_mat = np.bitwise_xor(bs_arr[:, None], bs_arr[None, :])
-    pop_mat = popcount_array(xor_mat.ravel()).reshape(N, N)
-    mask = (pop_mat == 1)
-    np.fill_diagonal(mask, False)
-    degrees = mask.sum(axis=1)
+    if n_qubits < 63:
+        bs_arr = np.asarray(bitstrings, dtype=np.int64)
+        xor_mat = np.bitwise_xor(bs_arr[:, None], bs_arr[None, :])
+        pop_mat = popcount_array(xor_mat.ravel()).reshape(N, N)
+        mask = (pop_mat == 1)
+        np.fill_diagonal(mask, False)
+        degrees = mask.sum(axis=1)
+        n_pairs = int(mask.sum() // 2)
+    else:
+        # Same width limit as pauli_hamming1_matrix; see the helper.
+        rows, _cols = _hamming1_pairs_bigint(bitstrings)
+        degrees = np.bincount(rows, minlength=N)
+        n_pairs = int(rows.size // 2)
+
     return {
-        "n_pairs_hamming_1": int(mask.sum() // 2),
+        "n_pairs_hamming_1": n_pairs,
         "avg_degree": float(degrees.mean()),
-        "max_degree": int(degrees.max()),
+        "max_degree": int(degrees.max()) if degrees.size else 0,
         "n_isolated": int((degrees == 0).sum()),
     }
 
