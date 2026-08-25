@@ -13,3 +13,9 @@ revision_workspace/
 
 # OS
 .DS_Store
+
+# Revision-stage run outputs
+revision/results/
+
+# Generated at sync time; records the commit it is stamped from
+revision/configs/source_commit.json
