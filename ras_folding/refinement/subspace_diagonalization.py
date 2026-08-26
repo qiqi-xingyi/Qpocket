@@ -147,7 +147,7 @@ class SubspaceDiagonalizationRefiner:
         # sole supported SQD off-diagonal coupling is the hybrid
         # Pauli ⊕ RMSD operator (hybrid_coupling_matrix), which requires a
         # transverse-field strength g_quantum > 0 and the qubit count.
-        valid_modes = ("hybrid",)
+        valid_modes = ("hybrid", "rmsd")
         if coupling_mode not in valid_modes:
             raise ValueError(
                 f"coupling_mode must be one of {valid_modes}; got {coupling_mode!r}"
@@ -208,32 +208,56 @@ class SubspaceDiagonalizationRefiner:
         # hybrid_coupling_matrix internally composes the exact Pauli
         # Hamming-1 matrix element (pauli_coupling.pauli_hamming1_matrix)
         # with the RMSD-Gaussian kernel (coupling.rmsd_kernel_coupling).
-        from ras_folding.refinement.hybrid_coupling import (
-            hybrid_coupling_matrix,
-        )
-        bitstrings = [
-            _bitstring_to_int(s.bitstring) for s in selected if s.bitstring
-        ]
-        if len(bitstrings) != len(selected):
-            raise RuntimeError(
-                "hybrid coupling requires all selected samples to have "
-                "a bitstring set"
+        if self.coupling_mode == "rmsd":
+            # RMSD kernel only. Two things make this mode necessary rather
+            # than a convenience. Candidates that did not come from the
+            # lattice encoder -- a loop remodeller's or a trajectory's
+            # output -- have no bitstring, and forcing them onto the
+            # lattice to obtain one would degrade the structures being
+            # compared. And the Pauli term contributes nothing here in any
+            # case: among three thousand sampled candidates the pairs one
+            # bond apart number tens out of millions, and none at all for
+            # the longer fragments, so the transverse field has no support
+            # in the subspace it is applied to.
+            from ras_folding.refinement.coupling import rmsd_kernel_coupling
+            T, rmsd_info = rmsd_kernel_coupling(
+                coords_stack, k_neighbors=self.k_neighbors,
+                kappa=self.kappa, sigma=self.sigma,
             )
-        T, hybrid_info = hybrid_coupling_matrix(
-            bitstrings, coords_stack,
-            g=self.g_quantum, n_qubits=self.n_qubits,
-            alpha_pauli=self.alpha_pauli,
-            alpha_rmsd=self.alpha_rmsd,
-            k_neighbors_rmsd=self.k_neighbors,
-            kappa_rmsd=self.kappa,
-            sigma_rmsd=self.sigma,
-        )
-        coupling_info = {
-            "mode": "hybrid",
-            "n_nonzero": int(T.nnz),
-            "sigma_used": hybrid_info["rmsd_info"].get("sigma_used"),
-            **hybrid_info,
-        }
+            coupling_info = {
+                "mode": "rmsd",
+                "n_nonzero": int(T.nnz),
+                "sigma_used": rmsd_info.get("sigma_used"),
+                "rmsd_info": rmsd_info,
+                "pauli_omitted": True,
+            }
+        else:
+            from ras_folding.refinement.hybrid_coupling import (
+                hybrid_coupling_matrix,
+            )
+            bitstrings = [
+                _bitstring_to_int(s.bitstring) for s in selected if s.bitstring
+            ]
+            if len(bitstrings) != len(selected):
+                raise RuntimeError(
+                    "hybrid coupling requires all selected samples to have "
+                    "a bitstring set"
+                )
+            T, hybrid_info = hybrid_coupling_matrix(
+                bitstrings, coords_stack,
+                g=self.g_quantum, n_qubits=self.n_qubits,
+                alpha_pauli=self.alpha_pauli,
+                alpha_rmsd=self.alpha_rmsd,
+                k_neighbors_rmsd=self.k_neighbors,
+                kappa_rmsd=self.kappa,
+                sigma_rmsd=self.sigma,
+            )
+            coupling_info = {
+                "mode": "hybrid",
+                "n_nonzero": int(T.nnz),
+                "sigma_used": hybrid_info["rmsd_info"].get("sigma_used"),
+                **hybrid_info,
+            }
 
         # --- effective hamiltonian ---------------------------------------
         H, E_norm, h_info = build_effective_hamiltonian(
@@ -310,6 +334,10 @@ class SubspaceDiagonalizationRefiner:
             "n_eligible": len(eligible),
             "n_selected": len(selected),
             "n_nonzero_couplings": int(coupling_info.get("n_nonzero", 0)),
+            # The coupling mode changes the operator being diagonalised, so
+            # a summary that omits it cannot be read back unambiguously.
+            "coupling_mode": coupling_info.get("mode"),
+            "pauli_omitted": bool(coupling_info.get("pauli_omitted", False)),
             "sigma_used": coupling_info.get("sigma_used"),
             "sigma": self.sigma,
             "kappa": self.kappa,
