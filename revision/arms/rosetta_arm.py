@@ -113,8 +113,16 @@ def write_loop_file(dst: Path, start_resi: int, end_resi: int) -> Dict[str, Any]
             "n_rebuilt": hi - lo + 1}
 
 
+# Rosetta parses -run:jran as a signed 32-bit integer. The shared seed
+# derivation yields a uint32, whose upper half overflows that and is
+# rejected with an empty value in the error, so it is folded into range
+# here rather than changing the derivation the other arms share.
+JRAN_MAX = 2_147_483_647
+
+
 def build_command(exe: str, pdb: Path, loops: Path, out_dir: Path,
                   nstruct: int, seed: int) -> List[str]:
+    jran = (int(seed) % (JRAN_MAX - 1)) + 1
     return [
         exe,
         "-in:file:s", str(pdb),
@@ -125,7 +133,7 @@ def build_command(exe: str, pdb: Path, loops: Path, out_dir: Path,
         "-out:path:pdb", str(out_dir),
         "-out:pdb_gz",
         "-in:file:fullatom",
-        "-constant_seed", "-jran", str(seed),
+        "-constant_seed", "-jran", str(jran),
         "-mute", "all",
         "-overwrite",
     ]
@@ -219,6 +227,7 @@ def main(argv=None) -> int:
                         args.nstruct, seed)
 
     record.inputs = {
+        "jran": (int(seed) % (JRAN_MAX - 1)) + 1,
         "ref_pdb": m["ref_pdb"], "chain_id": chain,
         "start_resi": start_resi, "end_resi": end_resi,
         "n_residues": int(ei.n_residues),
