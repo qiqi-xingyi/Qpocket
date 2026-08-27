@@ -5,7 +5,10 @@
 #
 #   python revision/osc/make_cells.py --arms R --repeats 1 \
 #          --out revision/configs/g2_cells.tsv
-#   sbatch --array=1-36 revision/osc/submit_rosetta.sh
+#   sbatch --array=1-144 --export=ALL,METHOD=kic,NSTRUCT=50 \
+#          revision/osc/submit_rosetta.sh
+#   sbatch --array=1-144 --export=ALL,METHOD=backrub,NSTRUCT=50 \
+#          --job-name=qpr_brb revision/osc/submit_rosetta.sh
 #
 #SBATCH --job-name=qpr_ros
 #SBATCH --account=PGS0423
@@ -26,6 +29,8 @@ mkdir -p revision/results/slurm
 
 CELLS="${CELLS:-revision/configs/g2_cells.tsv}"
 NSTRUCT="${NSTRUCT:-200}"
+METHOD="${METHOD:-kic}"
+NTRIALS="${NTRIALS:-1000}"
 
 IDX="${SLURM_ARRAY_TASK_ID:?submit as an array job}"
 LINE="$(awk -F'\t' -v i="${IDX}" 'NR>1 { sub(/\r$/, "") } NR>1 && $1==i {print; found=1} END{if(!found) exit 3}' "${CELLS}")" || {
@@ -33,8 +38,8 @@ LINE="$(awk -F'\t' -v i="${IDX}" 'NR>1 { sub(/\r$/, "") } NR>1 && $1==i {print; 
 TASK="$(echo "${LINE}" | cut -f3)"
 REP="$(echo "${LINE}"  | cut -f4)"
 
-echo "[arm R cell ${IDX}] task=${TASK} repeat=${REP} nstruct=${NSTRUCT}"
-echo "[arm R cell ${IDX}] node=$(hostname)"
+echo "[cell ${IDX}] method=${METHOD} task=${TASK} repeat=${REP} nstruct=${NSTRUCT}"
+echo "[cell ${IDX}] node=$(hostname)"
 
 module load rosetta/3.12
 module load miniconda3/24.1.2-py310
@@ -43,9 +48,18 @@ source activate "/fs/scratch/PGS0423/${USER}/envs/qpocket-revision"
 
 export OMP_NUM_THREADS=1
 
-python revision/arms/rosetta_arm.py \
-    --task-id "${TASK}" \
-    --repeat "${REP}" \
-    --nstruct "${NSTRUCT}"
+if [[ "${METHOD}" == "induced_fit" ]]; then
+    python revision/arms/induced_fit_arm.py \
+        --task-id "${TASK}" \
+        --repeat "${REP}" \
+        --nstruct "${NSTRUCT}"
+else
+    python revision/arms/rosetta_arm.py \
+        --method "${METHOD}" \
+        --task-id "${TASK}" \
+        --repeat "${REP}" \
+        --nstruct "${NSTRUCT}" \
+        --ntrials "${NTRIALS}"
+fi
 
-echo "[arm R cell ${IDX}] complete"
+echo "[cell ${IDX}] complete"

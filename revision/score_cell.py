@@ -15,6 +15,16 @@ would be a difference between the arms rather than a control on them.
 Native coordinates are read once, after selection, to score the structure
 the selector already chose. They do not reach any stage that generates,
 ranks, or selects. See `configs/G1_FROZEN_ENDPOINTS.md`.
+
+Arms that emit coordinates rather than lattice codes -- a loop remodeller,
+a backbone perturbation, an induced-fit docking run -- enter through the
+same function with ``--coords-npz``. They skip only the decoder, which has
+nothing to decode for them, and are scored, refined, clustered, and
+selected by the code every other arm goes through. Forcing their
+structures onto the lattice to obtain a bitstring would degrade the very
+structures under comparison, so the refinement runs in its RMSD-only
+coupling mode for them; the Pauli term it omits has no support at this
+scale in any arm.
 """
 from __future__ import annotations
 
@@ -101,6 +111,42 @@ def pool_best(coords: np.ndarray, native: np.ndarray) -> Dict[str, Any]:
     }
 
 
+def load_coords_npz(path: Path, ctx, limit: Optional[int]
+                    ) -> List[CandidateSample]:
+    """Rebuild candidates from an arm that produced coordinates directly.
+
+    The same validity battery is applied as for decoded candidates, so a
+    structure that would have been rejected coming out of the decoder is
+    rejected here too.
+    """
+    from revision.physical_validity import validate_physical_coords
+
+    z = np.load(path)
+    C = z["coords"]
+    out: List[CandidateSample] = []
+    n_invalid = 0
+    for i in range(C.shape[0]):
+        if limit is not None and i >= limit:
+            break
+        coords = np.asarray(C[i], dtype=np.float64)
+        valid, reason, _info = validate_physical_coords(coords, ctx)
+        if not valid:
+            n_invalid += 1
+            continue
+        # No bitstring exists for these arms; codes carry a placeholder so
+        # the container's own invariant holds, and nothing downstream reads
+        # it once the RMSD-only coupling is in use.
+        s = CandidateSample(codes=[0], coords=coords, count=1,
+                            accepted=True, valid=True,
+                            metadata={"source": "coords_npz"})
+        s.bitstring = None
+        out.append(s)
+    if n_invalid:
+        logger.warning("%d supplied conformations failed physical validity "
+                       "and were dropped", n_invalid)
+    return out
+
+
 def load_candidates(path: Path, ctx, limit: Optional[int]) -> List[CandidateSample]:
     """Rebuild scored candidates and decode them through the shared decoder.
 
@@ -144,7 +190,12 @@ def load_candidates(path: Path, ctx, limit: Optional[int]) -> List[CandidateSamp
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--arm", required=True, choices=["Q", "P", "M"])
+    p.add_argument("--arm", required=True,
+                   help="Q, P, M for the sampled arms; R, RB, I for the "
+                        "coordinate-producing comparators")
+    p.add_argument("--coords-npz", action="store_true",
+                   help="read conformations.npz instead of candidates.csv; "
+                        "required for arms that do not emit lattice codes")
     p.add_argument("--task-id", required=True)
     p.add_argument("--repeat", type=int, default=0)
     p.add_argument("--results-root", default="revision/results/g1_pilot")
@@ -163,7 +214,8 @@ def main(argv=None) -> int:
     if not res_root.is_absolute():
         res_root = root / res_root
     cell = res_root / args.arm / args.task_id / f"repeat_{args.repeat}"
-    cand_path = cell / "candidates.csv"
+    cand_path = cell / ("conformations.npz" if args.coords_npz
+                        else "candidates.csv")
     if not cand_path.is_file():
         logger.error("no candidates at %s", cand_path)
         return 2
@@ -176,7 +228,9 @@ def main(argv=None) -> int:
                 "densify_params": DENSIFY, "refiner_params": REFINER,
                 "postprocess_params": POSTPROCESS,
                 "selector": "rank_basins(basin_weight_bonus=0.5)",
-                "primary_endpoint": "inframe_ca_rmsd_no_superposition"},
+                "primary_endpoint": "inframe_ca_rmsd_no_superposition",
+                "input_mode": "coords_npz" if args.coords_npz else "bitstring",
+                "coupling_mode": "rmsd" if args.coords_npz else "hybrid"},
     ).start(root)
 
     tasks, _ = load_kras_tasks(root / args.tasks,
@@ -189,7 +243,8 @@ def main(argv=None) -> int:
     ctx = SamplingContext(encoder_inputs=ei, sequence=task.sequence,
                           metadata={"case_id": task.task_id, **task.metadata})
 
-    cands = load_candidates(cand_path, ctx, args.limit)
+    cands = (load_coords_npz(cand_path, ctx, args.limit) if args.coords_npz
+             else load_candidates(cand_path, ctx, args.limit))
     logger.info("decoded %d candidates", len(cands))
     if not cands:
         record.note("No candidate decoded; no endpoint could be computed.")
@@ -225,8 +280,11 @@ def main(argv=None) -> int:
         n_accepted=sum(1 for s in pool if s.accepted),
         summary={"source": "revision.score_cell"},
     )
+    refiner_kw = dict(REFINER)
+    if args.coords_npz:
+        refiner_kw["coupling_mode"] = "rmsd"
     refiner = SubspaceDiagonalizationRefiner(
-        n_qubits=int(ei.n_bonds) * 6, **REFINER)
+        n_qubits=int(ei.n_bonds) * 6, **refiner_kw)
     refined = refiner.refine(batch)
     logger.info("refined to %d candidates", len(refined.candidates))
 

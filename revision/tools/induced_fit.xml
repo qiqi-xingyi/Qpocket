@@ -1,0 +1,63 @@
+<ROSETTASCRIPTS>
+  <!-- Induced-fit docking: the pocket backbone and side chains relax while
+       the ligand is re-docked, which is the comparison Reviewer 2 asks for.
+       Ligand-only docking would hold the backbone rigid and would not be
+       the same experiment. -->
+  <SCOREFXNS>
+    <ScoreFunction name="ligand_soft_rep" weights="ligand_soft_rep"/>
+    <ScoreFunction name="hard_rep" weights="ligand"/>
+  </SCOREFXNS>
+
+  <!-- The Transform mover scores ligand placement on a precomputed grid
+       and will not start without one declared. -->
+  <SCORINGGRIDS ligand_chain="X" width="20">
+    <ClassicGrid grid_name="classic" weight="1.0"/>
+  </SCORINGGRIDS>
+
+  <LIGAND_AREAS>
+    <LigandArea name="docking_sidechain" chain="X" cutoff="6.0"
+                add_nbr_radius="true" all_atom_mode="true"
+                minimize_ligand="10"/>
+    <LigandArea name="final_sidechain" chain="X" cutoff="6.0"
+                add_nbr_radius="true" all_atom_mode="true"/>
+    <!-- Calpha_restraints is what lets the backbone move at all: without it
+         the protocol is rigid-receptor docking under another name. -->
+    <LigandArea name="final_backbone" chain="X" cutoff="7.0"
+                add_nbr_radius="false" all_atom_mode="true"
+                Calpha_restraints="0.3"/>
+  </LIGAND_AREAS>
+
+  <INTERFACE_BUILDERS>
+    <InterfaceBuilder name="side_chain_for_docking"
+                      ligand_areas="docking_sidechain"/>
+    <InterfaceBuilder name="side_chain_for_final"
+                      ligand_areas="final_sidechain"/>
+    <InterfaceBuilder name="backbone" ligand_areas="final_backbone"
+                      extension_window="3"/>
+  </INTERFACE_BUILDERS>
+
+  <MOVEMAP_BUILDERS>
+    <MoveMapBuilder name="docking" sc_interface="side_chain_for_docking"
+                    minimize_water="false"/>
+    <MoveMapBuilder name="final" sc_interface="side_chain_for_final"
+                    bb_interface="backbone" minimize_water="false"/>
+  </MOVEMAP_BUILDERS>
+
+  <MOVERS>
+    <Transform name="transform" chain="X" box_size="5.0"
+               move_distance="0.2" angle="5" cycles="500" repeats="1"
+               temperature="5"/>
+    <HighResDocker name="high_res_docker" cycles="6" repack_every_Nth="3"
+                   scorefxn="ligand_soft_rep" movemap_builder="docking"/>
+    <FinalMinimizer name="final" scorefxn="hard_rep"
+                    movemap_builder="final"/>
+  </MOVERS>
+
+  <PROTOCOLS>
+    <Add mover_name="transform"/>
+    <Add mover_name="high_res_docker"/>
+    <Add mover_name="final"/>
+  </PROTOCOLS>
+
+  <OUTPUT scorefxn="hard_rep"/>
+</ROSETTASCRIPTS>

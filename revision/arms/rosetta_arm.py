@@ -120,15 +120,14 @@ def write_loop_file(dst: Path, start_resi: int, end_resi: int) -> Dict[str, Any]
 JRAN_MAX = 2_147_483_647
 
 
-def build_command(exe: str, pdb: Path, loops: Path, out_dir: Path,
-                  nstruct: int, seed: int) -> List[str]:
+def build_command(method: str, exe: str, pdb: Path, loops: Path,
+                  out_dir: Path, nstruct: int, seed: int,
+                  pivot_residues: List[int], ntrials: int,
+                  mc_kt: float) -> List[str]:
     jran = (int(seed) % (JRAN_MAX - 1)) + 1
-    return [
+    common = [
         exe,
         "-in:file:s", str(pdb),
-        "-loops:loop_file", str(loops),
-        "-loops:remodel", "perturb_kic",
-        "-loops:refine", "refine_kic",
         "-nstruct", str(nstruct),
         "-out:path:pdb", str(out_dir),
         "-out:pdb_gz",
@@ -137,6 +136,28 @@ def build_command(exe: str, pdb: Path, loops: Path, out_dir: Path,
         "-mute", "all",
         "-overwrite",
     ]
+    if method == "kic":
+        return common + [
+            "-loops:loop_file", str(loops),
+            "-loops:remodel", "perturb_kic",
+            "-loops:refine", "refine_kic",
+        ]
+    if method == "backrub":
+        # Backrub rotates a segment about an axis through two pivot atoms
+        # and leaves everything outside that segment untouched. Listing the
+        # whole fragment as pivots therefore confines every move to the
+        # fragment while the outermost pivots act as the axis ends, which
+        # is the same division of fixed and free that KIC is given. Unlike
+        # KIC it enforces no closure, so anchor drift is measured rather
+        # than assumed.
+        return common + [
+            "-backrub:pivot_residues", *[str(r) for r in pivot_residues],
+            "-backrub:pivot_atoms", "CA",
+            "-backrub:ntrials", str(ntrials),
+            "-backrub:mc_kt", str(mc_kt),
+            "-ex1", "-ex2", "-extrachi_cutoff", "0",
+        ]
+    raise ValueError(f"unknown method {method!r}")
 
 
 def extract_fragment(pdb_gz: Path, chain: str, start_resi: int,
@@ -179,7 +200,15 @@ def main(argv=None) -> int:
     p.add_argument("--structure-root", default="kras_select_systems")
     p.add_argument("--output-root", default="revision/results/g2_local")
     p.add_argument("--rosetta-root", default=ROSETTA_ROOT)
-    p.add_argument("--exe", default="loopmodel")
+    p.add_argument("--method", default="kic", choices=["kic", "backrub"],
+                   help="kic rebuilds the fragment interior with both ends "
+                        "held fixed; backrub perturbs the backbone locally "
+                        "without a closure constraint")
+    p.add_argument("--exe", default=None,
+                   help="defaults to the executable matching --method")
+    p.add_argument("--ntrials", type=int, default=1000,
+                   help="backrub Monte Carlo trials per output structure")
+    p.add_argument("--mc-kt", type=float, default=0.6)
     p.add_argument("--keep-pdbs", action="store_true")
     args = p.parse_args(argv)
 
@@ -198,17 +227,22 @@ def main(argv=None) -> int:
     ei = task.encoder_inputs
     chain = str(m["chain_id"])
     start_resi, end_resi = int(m["start_resi"]), int(m["end_resi"])
-    seed = derive_seed("R", args.task_id, args.repeat)
+    exe_name = args.exe or ("loopmodel" if args.method == "kic" else "backrub")
+    # The arm label separates the two methods in the results tree while
+    # keeping the seed derivation shared with every other arm.
+    arm = "R" if args.method == "kic" else "RB"
+    seed = derive_seed(arm, args.task_id, args.repeat)
 
     cell = (Path(args.output_root) if Path(args.output_root).is_absolute()
-            else root / args.output_root) / "R" / args.task_id / f"repeat_{args.repeat}"
+            else root / args.output_root) / arm / args.task_id / f"repeat_{args.repeat}"
     work = cell / "work"
     work.mkdir(parents=True, exist_ok=True)
 
     record = RunRecord(
-        experiment="g2_local_comparators", arm="R", task_id=args.task_id,
+        experiment="g2_local_comparators", arm=arm, task_id=args.task_id,
         config={"repeat": args.repeat, "seed": seed, "nstruct": args.nstruct,
-                "method": "rosetta_kic", "exe": args.exe,
+                "method": f"rosetta_{args.method}", "exe": exe_name,
+                "ntrials": args.ntrials, "mc_kt": args.mc_kt,
                 "rosetta_root": args.rosetta_root},
     ).start(root)
 
@@ -218,15 +252,18 @@ def main(argv=None) -> int:
     loops = work / "loops.txt"
     loop_meta = write_loop_file(loops, start_resi, end_resi)
 
-    exe = Path(args.rosetta_root) / "bin" / args.exe
+    exe = Path(args.rosetta_root) / "bin" / exe_name
     if not exe.exists():
-        exe = Path(shutil.which(args.exe) or args.exe)
+        exe = Path(shutil.which(exe_name) or exe_name)
     out_pdbs = work / "pdbs"
     out_pdbs.mkdir(exist_ok=True)
-    cmd = build_command(str(exe), rec_pdb, loops, out_pdbs,
-                        args.nstruct, seed)
+    pivots = list(range(start_resi, end_resi + 1))
+    cmd = build_command(args.method, str(exe), rec_pdb, loops, out_pdbs,
+                        args.nstruct, seed, pivots, args.ntrials, args.mc_kt)
 
     record.inputs = {
+        "method": args.method,
+        "pivot_residues": pivots if args.method == "backrub" else None,
         "jran": (int(seed) % (JRAN_MAX - 1)) + 1,
         "ref_pdb": m["ref_pdb"], "chain_id": chain,
         "start_resi": start_resi, "end_resi": end_resi,
@@ -255,8 +292,20 @@ def main(argv=None) -> int:
             coords.append(c)
 
     lig = prep["ligand_xyz"]
+    drift = None
     if coords:
         C = np.stack(coords)
+        native_ca = read_pdb_ca(src, chain)
+        a_lo, a_hi = native_ca.get(start_resi), native_ca.get(end_resi)
+        if a_lo is not None and a_hi is not None:
+            d_lo = np.linalg.norm(C[:, 0, :] - a_lo[None, :], axis=1)
+            d_hi = np.linalg.norm(C[:, -1, :] - a_hi[None, :], axis=1)
+            drift = {
+                "anchor_left_mean": float(d_lo.mean()),
+                "anchor_left_max": float(d_lo.max()),
+                "anchor_right_mean": float(d_hi.mean()),
+                "anchor_right_max": float(d_hi.max()),
+            }
         np.savez_compressed(cell / "conformations.npz", coords=C,
                             ligand_xyz=lig if lig is not None
                             else np.zeros((0, 3)))
@@ -267,6 +316,10 @@ def main(argv=None) -> int:
         "wall_seconds_rosetta": round(wall, 1),
         "conformations_path": str(cell / "conformations.npz"),
         "ligand_available": lig is not None,
+        # KIC closes the loop onto its stems by construction; backrub has no
+        # closure term, so how far the fragment ends move is a property of
+        # the run and is measured rather than assumed to be zero.
+        "anchor_drift_A": drift,
     }
     record.finish()
     if proc.returncode != 0:
@@ -280,8 +333,13 @@ def main(argv=None) -> int:
     if not args.keep_pdbs and coords:
         shutil.rmtree(out_pdbs, ignore_errors=True)
 
-    print(f"[arm R] {args.task_id} repeat={args.repeat} rc={proc.returncode} "
-          f"structures={len(coords)}/{args.nstruct} wall={wall:.0f}s")
+    dmsg = ""
+    if drift:
+        dmsg = (f" anchor_drift={drift['anchor_left_mean']:.2f}/"
+                f"{drift['anchor_right_mean']:.2f}A")
+    print(f"[arm {arm}] {args.task_id} repeat={args.repeat} "
+          f"rc={proc.returncode} structures={len(coords)}/{args.nstruct} "
+          f"wall={wall:.0f}s{dmsg}")
     return 0 if coords else 3
 
 

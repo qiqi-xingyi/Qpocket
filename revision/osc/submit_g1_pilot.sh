@@ -35,6 +35,7 @@ cd "${REPO_ROOT}"
 mkdir -p revision/results/slurm
 
 CELLS="${CELLS:-revision/configs/g1_cells.tsv}"
+TASKS="${TASKS:-inputs/kras_tasks.csv}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/revision/results/g1_pilot}"
 
 # The proposal budget in the manifest is PER TAU, matching how the quantum
@@ -94,6 +95,7 @@ python revision/run_arm.py \
     --budget-mode proposal \
     --n-proposals "${N_PROPOSALS}" \
     --leakage-mode "${LEAKAGE_MODE}" \
+    --tasks "${TASKS}" \
     --output-root "${OUTPUT_ROOT}"
 
 echo "[cell ${IDX}] complete"

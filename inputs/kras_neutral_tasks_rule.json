@@ -1,0 +1,183 @@
+{
+  "functional_elements_excluded": {
+    "P-loop": [
+      10,
+      17
+    ],
+    "Switch-I": [
+      30,
+      40
+    ],
+    "Switch-II": [
+      60,
+      76
+    ]
+  },
+  "margin_residues": 2,
+  "existing_fragments_excluded": true,
+  "lengths_matched_to_study": [
+    7,
+    10,
+    12,
+    15
+  ],
+  "per_length_per_structure": 10,
+  "selection": "windows qualifying in every structure are intersected, enumerated in residue order, then sampled at even spacing; deterministic, no seed",
+  "shared_across_all_structures": true,
+  "per_length": [
+    {
+      "length": 7,
+      "n_common_windows": 61,
+      "n_disjoint_available": 11,
+      "n_selected": 10,
+      "selected": [
+        [
+          21,
+          27
+        ],
+        [
+          45,
+          51
+        ],
+        [
+          81,
+          87
+        ],
+        [
+          106,
+          112
+        ],
+        [
+          113,
+          119
+        ],
+        [
+          127,
+          133
+        ],
+        [
+          134,
+          140
+        ],
+        [
+          141,
+          147
+        ],
+        [
+          148,
+          154
+        ],
+        [
+          155,
+          161
+        ]
+      ],
+      "overlap_allowed": false,
+      "n_structures": 9
+    },
+    {
+      "length": 10,
+      "n_common_windows": 53,
+      "n_disjoint_available": 6,
+      "n_selected": 6,
+      "selected": [
+        [
+          106,
+          115
+        ],
+        [
+          116,
+          125
+        ],
+        [
+          126,
+          135
+        ],
+        [
+          136,
+          145
+        ],
+        [
+          146,
+          155
+        ],
+        [
+          156,
+          165
+        ]
+      ],
+      "overlap_allowed": false,
+      "n_structures": 9
+    },
+    {
+      "length": 12,
+      "n_common_windows": 51,
+      "n_disjoint_available": 5,
+      "n_selected": 5,
+      "selected": [
+        [
+          106,
+          117
+        ],
+        [
+          118,
+          129
+        ],
+        [
+          130,
+          141
+        ],
+        [
+          142,
+          153
+        ],
+        [
+          154,
+          165
+        ]
+      ],
+      "overlap_allowed": false,
+      "n_structures": 9
+    },
+    {
+      "length": 15,
+      "n_common_windows": 48,
+      "n_disjoint_available": 4,
+      "n_selected": 4,
+      "selected": [
+        [
+          106,
+          120
+        ],
+        [
+          121,
+          135
+        ],
+        [
+          136,
+          150
+        ],
+        [
+          151,
+          165
+        ]
+      ],
+      "overlap_allowed": false,
+      "n_structures": 9
+    }
+  ],
+  "prespecified_test": {
+    "stated": "before the enlarged background was run",
+    "hypothesis": "ligand-associated response localises to the Switch-II contact module, so both Frag-B and Frag-F rank first among their length-matched disjoint neutral background",
+    "statistic": "product of per-fragment rank-one probabilities, 1/(n_background+1) each",
+    "attainable_floor": {
+      "Frag-B_length_15": 0.2,
+      "Frag-F_length_10": 0.143,
+      "joint": 0.0286
+    },
+    "why_joint": "the manuscript's claim is about the module, not about either fragment alone; testing them together is the claim's own form and not a combination chosen after seeing which fragment did better",
+    "why_disjoint": "overlapping windows share most of their residues and are not independent observations; a background of overlapping windows would make the rank statistic look stronger than the data support",
+    "hard_limit": "KRAS is about 167 residues, and after excluding the P-loop, both switches and every study fragment there is not room for more disjoint long windows. No amount of additional compute lowers the per-fragment floor.",
+    "negative_result_action": "if either Switch-II fragment fails to rank first, the localisation claim is not supported by this control and is removed"
+  }
+}
