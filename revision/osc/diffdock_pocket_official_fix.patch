@@ -1,0 +1,11 @@
+diff --git a/inference.py b/inference.py
+--- a/inference.py
++++ b/inference.py
+@@ -317,6 +317,6 @@ def main(args):
+     os.makedirs(args.out_dir, exist_ok=True)
+ 
+-    if args.model_dir is None or args.filtering_dir is None:
++    if args.model_dir is None or args.filtering_model_dir is None:
+         base_model_dir = os.path.join(args.model_cache_dir, args.tag)
+         os.makedirs(base_model_dir, exist_ok=True)
+ 

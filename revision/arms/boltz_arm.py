@@ -110,6 +110,14 @@ def main(argv=None) -> int:
     p.add_argument("--params-root", default="revision/results/ligand_params")
     p.add_argument("--output-root", default="revision/results/g2_boltz")
     p.add_argument("--boltz", default=None)
+    p.add_argument("--use-smiles", action="store_true",
+                   help="pass the ligand as a coordinate-derived SMILES "
+                        "instead of its component identifier; the "
+                        "identifier is preferred and is the default")
+    p.add_argument("--accelerator", default="gpu",
+                   choices=["gpu", "cpu"],
+                   help="the GPU queue on this cluster can be days deep; "
+                        "CPU is slower per case but starts immediately")
     p.add_argument("--no-kernels", action="store_true",
                    help="disable the accelerated triangular kernels; slower "
                         "but independent of the cuEquivariance stack")
@@ -148,6 +156,7 @@ def main(argv=None) -> int:
                 "ligand_included": not args.no_ligand,
                 "model": "boltz",
                 "no_kernels": bool(args.no_kernels),
+                "accelerator": args.accelerator,
                 "af3_note": "AF3 weights are not public and its server has "
                             "no batch interface; Boltz is used as an "
                             "openly-weighted model of the same class"},
@@ -164,22 +173,34 @@ def main(argv=None) -> int:
         print(f"[arm {arm}] {args.task_id} sequence gap — skipped")
         return 3
 
+    # The ligand is named by its PDB chemical component identifier rather
+    # than by a SMILES string derived from coordinates. Perceiving bond
+    # orders from a structure is lossy -- for one of these ligands it
+    # produced a nitrogen with four bonds and no charge, which RDKit
+    # rejects outright -- while the component identifier is the
+    # authoritative definition the structure was deposited against.
+    ccd = str(m.get("ligand_resname") or "").strip().upper() or None
     smiles = None
     if not args.no_ligand:
-        smiles = smiles_for(str(m.get("ligand_resname")),
-                            root / args.params_root)
-        if smiles is None:
-            record.note("No SMILES available for the ligand; the run would "
-                        "not be the comparison intended.")
+        if ccd is None:
+            record.note("No ligand component identifier for this system.")
             record.finish()
             write_run_record(record, cell / "run_record.json")
             return 4
+        if args.use_smiles:
+            smiles = smiles_for(ccd, root / args.params_root)
+            if smiles is None:
+                record.note("SMILES requested but none could be derived.")
+                record.finish()
+                write_run_record(record, cell / "run_record.json")
+                return 4
 
     yaml_lines = ["version: 1", "sequences:",
                   "  - protein:", "      id: A", f"      sequence: {seq}"]
-    if smiles:
-        yaml_lines += ["  - ligand:", "      id: L",
-                       f"      smiles: '{smiles}'"]
+    if not args.no_ligand:
+        yaml_lines += ["  - ligand:", "      id: L"]
+        yaml_lines += ([f"      smiles: '{smiles}'"] if smiles
+                       else [f"      ccd: {ccd}"])
     inp = work / f"{args.task_id}.yaml"
     inp.write_text("\n".join(yaml_lines) + "\n", encoding="utf-8")
 
@@ -191,6 +212,7 @@ def main(argv=None) -> int:
            "--seed", str(seed % (2 ** 31 - 1)),
            "--output_format", "pdb",
            "--use_msa_server",
+           "--accelerator", args.accelerator,
            "--override"]
     if args.no_kernels:
         cmd.append("--no_kernels")
@@ -201,6 +223,8 @@ def main(argv=None) -> int:
         "window_length": len(seq),
         "flank_left": lo - wstart, "flank_right": wend - hi,
         "ligand_resname": m.get("ligand_resname"),
+        "ligand_spec": ("smiles" if smiles else
+                        ("ccd:" + str(ccd) if not args.no_ligand else None)),
         "smiles": smiles,
         "command": " ".join(cmd),
     }

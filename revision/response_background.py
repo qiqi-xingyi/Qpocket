@@ -19,10 +19,19 @@ manuscript's own figures is not in this repository.
 
 Construction, following the recorded settings of that analysis: pairwise
 CA distances as features, one principal-component projection fitted per
-fragment across the cases that share it, occupancy over a fixed number of
-bins, and the response as the largest L1 difference in occupancy between
-cases carrying different ligands. Fragment length governs the size of the
-space being searched, so fragments are compared within length.
+fragment across the cases that share it, and occupancy over a fixed number
+of bins. Fragment length governs the size of the space being searched, so
+fragments are compared within length.
+
+The response is the *mean* L1 difference in occupancy across cases
+carrying different ligands, not the largest. Taking the largest makes the
+statistic grow with the number of cases a fragment happens to span, since
+more cases offer more pairs for the maximum to be drawn from: among the
+study's fragments the maximum rises monotonically with case count, from
+0.09-1.25 at two cases to 0.78-0.85 at nine. That is a property of the
+statistic, not of the fragment. The mean is unaffected by how many pairs
+exist, so fragments spanning different numbers of structures remain
+comparable. Both are reported, and the maximum is labelled for what it is.
 """
 from __future__ import annotations
 
@@ -115,6 +124,7 @@ def response_for_fragment(cases: List[Tuple[str, str, np.ndarray]]
         occ[cid] = h / tot if tot else h.astype(float)
 
     lig_of = {cid: lig for lig, cid, _C in cases}
+    l1s: List[float] = []
     best = 0.0
     pair = None
     ids = list(occ)
@@ -124,12 +134,16 @@ def response_for_fragment(cases: List[Tuple[str, str, np.ndarray]]
             if lig_of[a] == lig_of[b]:
                 continue
             l1 = float(np.abs(occ[a] - occ[b]).sum())
+            l1s.append(l1)
             if l1 > best:
                 best, pair = l1, (a, b)
+    if not l1s:
+        return None
     # Spread of the projection is the "inherent search space" the reviewer
     # offers as the competing explanation; it is reported alongside.
-    return {"max_l1": best, "pair": pair, "n_cases": len(cases),
-            "proj_sd": float(np.std(proj_all))}
+    return {"response": float(np.mean(l1s)),
+            "max_l1": best, "n_pairs": len(l1s), "pair": pair,
+            "n_cases": len(cases), "proj_sd": float(np.std(proj_all))}
 
 
 def main(argv=None) -> int:
@@ -142,6 +156,10 @@ def main(argv=None) -> int:
                    help="also measure a comparator arm, e.g. "
                         "revision/results/g2_local/I")
     p.add_argument("--arm-label", default=None)
+    p.add_argument("--arm-bg-root", default=None,
+                   help="the comparator's own neutral background; without "
+                        "it a comparator can only be shown as a list of "
+                        "six numbers, which is not a test")
     p.add_argument("--min-cases", type=int, default=2)
     p.add_argument("--out", default="revision/results/RESPONSE_BACKGROUND.md")
     args = p.parse_args(argv)
@@ -183,16 +201,20 @@ def main(argv=None) -> int:
                 out[frag] = r
             print(f"  {label:<10} {frag:<12} n_cases={len(cases):>2} "
                   f"L={length.get(frag)} "
-                  f"max_l1={r['max_l1']:.3f}" if r else
+                  f"resp={r['response']:.3f}" if r else
                   f"  {label:<10} {frag:<12} skipped", flush=True)
         return out
 
     study = collect(args.study_root, args.study_tasks, "study")
     bg = collect(args.bg_root, args.bg_tasks, "background")
     comp: Dict[str, Dict[str, Any]] = {}
+    comp_bg: Dict[str, Dict[str, Any]] = {}
     if args.arm_root:
         comp = collect(args.arm_root, args.study_tasks,
                        args.arm_label or "comparator", npz=True)
+    if args.arm_bg_root:
+        comp_bg = collect(args.arm_bg_root, args.bg_tasks,
+                          (args.arm_label or "comparator") + "_bg", npz=True)
 
     lines: List[str] = []
     def emit(s: str = "") -> None:
@@ -205,13 +227,14 @@ def main(argv=None) -> int:
     emit("compared within length, because the size of the space searched is")
     emit("the competing explanation the objection names.")
     emit()
-    emit("| fragment | set | length | cases | response | projection spread |")
-    emit("|---|---|---:|---:|---:|---:|")
+    emit("| fragment | set | length | cases | pairs | response | max | spread |")
+    emit("|---|---|---:|---:|---:|---:|---:|---:|")
     for name, r in sorted(list(study.items()) + list(bg.items()),
                           key=lambda kv: (kv[1]["length"], kv[1]["set"],
                                           -kv[1]["max_l1"])):
         emit(f"| {name} | {r['set']} | {r['length']} | {r['n_cases']} | "
-             f"{r['max_l1']:.3f} | {r['proj_sd']:.2f} |")
+             f"{r['n_pairs']} | {r['response']:.3f} | {r['max_l1']:.3f} | "
+             f"{r['proj_sd']:.2f} |")
     emit()
 
     emit("## Where the study's fragments sit")
@@ -219,14 +242,14 @@ def main(argv=None) -> int:
     emit("| fragment | length | response | background median | percentile |")
     emit("|---|---:|---:|---:|---:|")
     for name, r in sorted(study.items(), key=lambda kv: kv[1]["length"]):
-        peers = [b["max_l1"] for b in bg.values()
+        peers = [b["response"] for b in bg.values()
                  if b["length"] == r["length"]]
         if not peers:
-            emit(f"| {name} | {r['length']} | {r['max_l1']:.3f} | "
+            emit(f"| {name} | {r['length']} | {r['response']:.3f} | "
                  f"no background at this length | — |")
             continue
-        pct = 100.0 * sum(1 for x in peers if x < r["max_l1"]) / len(peers)
-        emit(f"| {name} | {r['length']} | {r['max_l1']:.3f} | "
+        pct = 100.0 * sum(1 for x in peers if x < r["response"]) / len(peers)
+        emit(f"| {name} | {r['length']} | {r['response']:.3f} | "
              f"{statistics.median(peers):.3f} | {pct:.0f} |")
     emit()
     emit("A study fragment whose response sits inside the background range")
@@ -244,22 +267,46 @@ def main(argv=None) -> int:
         emit("would return a null by construction and would not be evidence")
         emit("of anything.")
         emit()
-        emit("| fragment | length | this method | comparator | ratio |")
-        emit("|---|---:|---:|---:|---:|")
+        emit("Magnitude is not the claim. What is claimed is that response")
+        emit("concentrates in the Switch-II contact module, so each method")
+        emit("is asked the same question about its own ensembles: does its")
+        emit("Switch-II fragment stand out against its own neutral")
+        emit("background? A method whose response is larger everywhere has")
+        emit("not shown localisation, and one whose response is smaller")
+        emit("everywhere has not failed to.")
+        emit()
+        emit("| fragment | length | this method | comparator | "
+             "this rank | comparator rank |")
+        emit("|---|---:|---:|---:|---:|---:|")
         for name, r in sorted(study.items(), key=lambda kv: kv[1]["length"]):
             c = comp.get(name)
+            own = [b["response"] for b in bg.values()
+                   if b["length"] == r["length"]]
+            own_rank = (f"{1 + sum(1 for x in own if x > r['response'])}"
+                        f"/{len(own) + 1}") if own else "—"
             if not c:
-                emit(f"| {name} | {r['length']} | {r['max_l1']:.3f} | — | — |")
+                emit(f"| {name} | {r['length']} | {r['response']:.3f} | — | "
+                     f"{own_rank} | — |")
                 continue
-            ratio = (r["max_l1"] / c["max_l1"]) if c["max_l1"] else float("inf")
-            emit(f"| {name} | {r['length']} | {r['max_l1']:.3f} | "
-                 f"{c['max_l1']:.3f} | {ratio:.2f} |")
+            peers = [b["response"] for b in comp_bg.values()
+                     if b["length"] == r["length"]]
+            crank = (f"{1 + sum(1 for x in peers if x > c['response'])}"
+                     f"/{len(peers) + 1}") if peers else "no background"
+            emit(f"| {name} | {r['length']} | {r['response']:.3f} | "
+                 f"{c['response']:.3f} | {own_rank} | {crank} |")
         emit()
+        if comp_bg:
+            emit("Both ranks are against a length-matched neutral background")
+            emit("built the same way for each method, so the two columns ask")
+            emit("one question of two ensembles rather than comparing numbers")
+            emit("that were never on the same scale.")
+            emit()
 
     out = PROJECT_ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    json.dump({"study": study, "background": bg, "comparator": comp},
+    json.dump({"study": study, "background": bg, "comparator": comp,
+               "comparator_background": comp_bg},
               (out.parent / "response_background.json").open("w"), indent=1)
     return 0
 

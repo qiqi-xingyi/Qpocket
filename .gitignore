@@ -10,10 +10,10 @@ result/
 examples/_smoke_run/
 tests/_tmp_landscape/
 revision_workspace/
-
+PNAS_paper/
 # OS
 .DS_Store
-
+PNAS_paper_revision_20260902/
 # Revision-stage run outputs
 revision/results/
 
